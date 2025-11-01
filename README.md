@@ -23,10 +23,6 @@ The application uses a modern dark theme:
 - Code blocks with dark theme and syntax highlighting
 - Highlight blocks with gradient borders and glow effects
 
-## 🌐 Live Demo
-
-Visit the live deployment: [GitHub Pages](https://yourusername.github.io/TreeAnalysis-deploy/)
-
 ## 🚀 Getting Started
 
 ### Prerequisites
@@ -242,38 +238,14 @@ const levelHeight = 100;  // Vertical spacing
 
 ## 📦 Deployment
 
-### GitHub Pages
+### GitHub Pages 部署
 
-This project is configured for automatic deployment to GitHub Pages using GitHub Actions.
+📖 **完整部署教程请查看：[DEPLOY.md](DEPLOY.md)**
 
-#### Setup Steps:
-
-1. **Push to GitHub:**
-   ```bash
-   git init
-   git add .
-   git commit -m "Initial commit"
-   git branch -M main
-   git remote add origin https://github.com/YOUR_USERNAME/YOUR_REPO_NAME.git
-   git push -u origin main
-   ```
-
-2. **Enable GitHub Pages:**
-   - Go to your repository Settings
-   - Navigate to Pages section
-   - Under "Source", select "GitHub Actions"
-   - Save the settings
-
-3. **Automatic Deployment:**
-   - The workflow will automatically deploy on every push to `main` branch
-   - Your site will be available at: `https://YOUR_USERNAME.github.io/YOUR_REPO_NAME/`
-
-#### Manual Deployment:
-
-The workflow also supports manual triggering:
-- Go to Actions tab
-- Select "Deploy to GitHub Pages" workflow
-- Click "Run workflow"
+快速步骤：
+1. 推送代码到 GitHub（公开仓库）
+2. Settings → Pages → 选择 "Deploy from a branch" → main 分支
+3. 等待 1-2 分钟，访问你的网站
 
 ## 📝 License
 
