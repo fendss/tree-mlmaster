@@ -1,0 +1,528 @@
+[
+    [
+        {
+            "node_index": 3,
+            "insights_from_parent": [
+                "根节点，无需分析"
+            ]
+        },
+        {
+            "node_index": 8,
+            "insights_from_parent": [
+                "数据预处理：修复对 numpy 数组的真假值判断，改为 len(...) 显式检查，避免空 embedding 崩溃",
+                "特征工程：嵌入计算不变，仍使用 Sentence-BERT 编码 code/markdown",
+                "模型选择：无变化，继续基于语义相似度匹配嵌入",
+                "参数调整：无超参调优，仅代码鲁棒性修复，确保验证与测试分支一致",
+                "训练策略：训练流程不变；生成提交时修正文件路径，提升管道稳定性"
+            ]
+        },
+        {
+            "node_index": 9,
+            "insights_from_parent": [
+                "数据预处理：对每个笔记本按顺序计算 code 单元嵌入，并基于前 k 个聚合得到动态 start embedding；保留对空 code 的回退",
+                "特征工程：用动态上下文（前 k 个 code 平均向量）替代静态“start”向量，增强开头 markdown 与代码的语义联系",
+                "模型选择：仍使用 all-MiniLM-L6-v2 句向量模型，但输入表示更具笔记本语境化",
+                "参数调整：引入 k（取默认3）作为聚合窗口，可作为超参进行调优以优化 Kendall Tau",
+                "训练策略：验证与提交流程保持，需对动态 start 策略在验证集上评估其对排序指标的提升"
+            ]
+        },
+        {
+            "node_index": 15,
+            "insights_from_parent": [
+                "数据预处理：再次明确对空 code_embeddings 的处理（len(...) 检查），并确保空情况使用回退 embedding",
+                "特征工程：动态 start embedding 保持不变，改动仅为确保在无 code 时稳定返回静态向量",
+                "模型选择：无更改，继续使用基于语义相似度的匹配策略",
+                "参数调整：未引入新超参，属于健壮性修复而非性能调优",
+                "训练策略：训练与评估流程不变，但提交与测试生成更可靠，减少因边界条件导致的失败"
+            ]
+        }
+    ],
+    [
+        {
+            "node_index": 3,
+            "insights_from_parent": [
+                "引入语义相似打分"
+            ]
+        },
+        {
+            "node_index": 8,
+            "insights_from_parent": [
+                "数据预处理：修复对 numpy 数组的真假值判断，改为显式长度检查，避免在无 code cell 时抛错",
+                "特征工程：保持 Sentence‑BERT 嵌入不变，markdown/code 嵌入计算逻辑一致",
+                "模型选择：无变化，继续使用 all‑MiniLM‑L6‑v2 进行向量化",
+                "参数调整：无超参调整，只是更稳健的空值检测",
+                "训练策略：验证/提交流程保持，错误修复提升脚本稳定性并确保 submission 保存"
+            ]
+        },
+        {
+            "node_index": 30,
+            "insights_from_parent": [
+                "数据预处理：将全局固定的“start”向量替换为每个 notebook 的首个 code cell 的 embedding（存在时），否则回退到默认",
+                "特征工程：使用动态起始向量为每个 notebook 提供上下文感知的相似度基准，增强初始 markdown 放置",
+                "模型选择：仍使用相同的 Sentence‑BERT 模型，无更换",
+                "参数调整：无显著超参/架构变更，侧重数据上下文处理改进",
+                "训练策略：验证逻辑不变，但预测逻辑改为基于 notebook 特定 start_emb，比静态 start 更具针对性"
+            ]
+        },
+        {
+            "node_index": 36,
+            "insights_from_parent": [
+                "数据预处理：重构为 process_notebook，code/markdown 嵌入可为 None 且用 len/None 检查处理空情况，避免 numpy 真假值歧义；统一提取 cell 源并按索引映射",
+                "特征工程：改为显式逐个计算 md‑to‑code 相似度并手动取最大值，避免广播/形状错误；按相似度降序排序插入，保证插入顺序确定性",
+                "模型选择：继续使用 Sentence‑BERT，未改模型类",
+                "参数调整：无超参数或模型参数调整，关注实现健壮性与边界情况处理",
+                "训练策略：封装预测逻辑用于验证和提交（process_notebook），Kendall 计算与验证流程微调以提高可维护性与鲁棒性"
+            ]
+        }
+    ],
+    [
+        {
+            "node_index": 6,
+            "insights_from_parent": [
+                "父为根节点，无需分析"
+            ]
+        },
+        {
+            "node_index": 13,
+            "insights_from_parent": [
+                "数据预处理：验证采样与读取方式保持不变",
+                "特征工程：从仅提取注释扩展到AST提取函数/类/导入等结构信息",
+                "模型选择：保留SentenceTransformer作为编码器（句向量）",
+                "参数调整：未调整模型超参，增加代码上下文拼接用于编码",
+                "训练策略：仍为零-shot编码+相似度匹配，验证使用Kendall Tau"
+            ]
+        },
+        {
+            "node_index": 14,
+            "insights_from_parent": [
+                "数据预处理：采样/划分策略不变，输入文本长度裁剪(max_length=512)",
+                "特征工程：在AST中加入变量赋值(Assign)以丰富代码上下文表示",
+                "模型选择：将句向量模型替换为 CodeBERT(microsoft/codebert-base)",
+                "参数调整：编码批次(batch_size=32)、使用CLS向量、启用GPU推理",
+                "训练策略：仍不微调模型，只用CodeBERT做编码并用点积匹配"
+            ]
+        },
+        {
+            "node_index": 18,
+            "insights_from_parent": [
+                "数据预处理：增加对markdown的emb映射字典(md_emb_dict)便于后续排序",
+                "特征工程：保留CodeBERT编码，新增按相邻代码相似度的局部重排策略",
+                "模型选择：继续使用CodeBERT，未更换编码器",
+                "参数调整：引入重新排序权重(前0.3/后0.7)来决定组内Markdown顺序",
+                "训练策略：通过后处理(re-ranking)优化同位点Markdown的局部顺序"
+            ]
+        },
+        {
+            "node_index": 19,
+            "insights_from_parent": [
+                "数据预处理：文本拼接方式保持，准备对每对(md,code)做交互计算",
+                "特征工程：从独立编码转向基于交叉注意力的编码以捕获更细粒度关联",
+                "模型选择：将编码器切换为 GraphCodeBERT(考虑数据流信息)",
+                "参数调整：引入跨序列交互计算，使用较小batch以处理组合复杂度",
+                "训练策略：不做微调，改为用cross-attention替代简单点积作为相似度度量"
+            ]
+        },
+        {
+            "node_index": 22,
+            "insights_from_parent": [
+                "数据预处理：用OrderedDict读取JSON以保留原始单元顺序",
+                "特征工程：将代码与markdown分开批次编码；为每个markdown对所有code分批计算交互",
+                "模型选择：继续使用GraphCodeBERT但改为正确的编码/批处理流程",
+                "参数调整：实现get_code_embeddings与cross_attention_embeddings并设置合理batch_size",
+                "训练策略：修正相似度矩阵计算与Kendall Tau实现，改进运行效率与正确性"
+            ]
+        },
+        {
+            "node_index": 23,
+            "insights_from_parent": [
+                "数据预处理：无变化，继续保持OrderedDict读取",
+                "特征工程：修复attention提取，确保outputs返回attentions用于加权聚合",
+                "模型选择：GraphCodeBERT配置更新(output_attentions=True)以获得注意力信息",
+                "参数调整：在模型调用中显式传入output_attentions=True以提取注意力张量",
+                "训练策略：无训练改动，增强attention-based相似度计算的正确性"
+            ]
+        },
+        {
+            "node_index": 27,
+            "insights_from_parent": [
+                "数据预处理：强制tokenizer使用固定max_length以确保批次内padding一致",
+                "特征工程：用attention_mask在加权时只平均有效token，避免不同pad长度影响",
+                "模型选择：仍用GraphCodeBERT，并在推理阶段设为eval()以稳定行为",
+                "参数调整：调整code_batch_size并基于valid_length规范化attention权重后softmax",
+                "训练策略：通过修正注意力聚合与padding处理消除维度不匹配，提升推理鲁棒性"
+            ]
+        }
+    ],
+    [
+        {
+            "node_index": 1,
+            "insights_from_parent": [
+                "使用BERT微调做位置回归"
+            ]
+        },
+        {
+            "node_index": 2,
+            "insights_from_parent": [
+                "数据预处理：弃用Tokenizer与复杂编码，直接读取JSON并按单元格类型分离",
+                "特征工程：移除文本嵌入和语义特征，仅依赖单纯位置与字母排序的规则化特征",
+                "模型选择：舍弃BERT回归模型，改为启发式策略（代码先行、Markdown按字母排序）",
+                "参数调整：无模型超参调优，消除了学习率、批量大小等训练参数需求",
+                "训练策略：不再训练模型，直接生成提交以避免原模型前向/token_type_ids相关错误"
+            ]
+        },
+        {
+            "node_index": 16,
+            "insights_from_parent": [
+                "数据预处理：保留每个单元格源码并分别构建代码与Markdown文本列表以供嵌入",
+                "特征工程：引入预训练SentenceTransformer生成代码与Markdown向量，构建相似度矩阵",
+                "模型选择：从简单启发式升级为语义相似度检索（mpnet嵌入+相似度匹配）",
+                "参数调整：不微调嵌入模型，使用点积/argmax选择最相关代码位置并加入验证评估（Kendall Tau）",
+                "训练策略：仍然无端到端训练，采用检索式插入策略以语义关联改善Markdown定位"
+            ]
+        }
+    ],
+    [
+        {
+            "node_index": 1,
+            "insights_from_parent": [
+                "根节点，无需分析"
+            ]
+        },
+        {
+            "node_index": 2,
+            "insights_from_parent": [
+                "数据预处理：跳过模型化预处理，直接读取并拼接 cell id",
+                "特征工程：不使用文本向量化，改为按字母/原序简单排序 markdown",
+                "模型选择：放弃 BERT 模型，使用启发式规则（code先，md排序）",
+                "参数调整：无模型超参，只有 IO/排序实现细节",
+                "训练策略：取消训练环节，直接生成 submission"
+            ]
+        },
+        {
+            "node_index": 31,
+            "insights_from_parent": [
+                "数据预处理：提取并拼接 code/md 文本，使用 CodeBERT tokenizer 进行编码",
+                "特征工程：为 code 与 markdown 生成语义嵌入作为匹配特征",
+                "模型选择：从启发式切换到预训练 CodeBERT 做向量化（无微调）",
+                "参数调整：设定 max_length=256、批次嵌入推理 batch_size 参数",
+                "训练策略：仍无训练，基于相似度（cosine via 1-cos）匹配并插入 markdown"
+            ]
+        },
+        {
+            "node_index": 33,
+            "insights_from_parent": [
+                "数据预处理：保持文本提取但扩大批次处理以加速嵌入计算",
+                "特征工程：由单一最近 code 转为考虑相邻 code 的位置得分（相邻平均）",
+                "模型选择：仍用 CodeBERT，但以 eval 模式推理，增大推理 batch_size",
+                "参数调整：引入 beam search（beam_width=5）、更大嵌入 batch_size",
+                "训练策略：从局部贪心改为带评分的 beam 搜索以优化整体 markdown 排序"
+            ]
+        },
+        {
+            "node_index": 41,
+            "insights_from_parent": [
+                "数据预处理：构建训练样本（正负对）基于训练集中真实的 cell 顺序与上下文代码",
+                "特征工程：使用上下文 code（前后若干 code）拼接为正样本上下文特征",
+                "模型选择：对 CodeBERT 进行对比/二分类微调以增强 code-md 关联表示",
+                "参数调整：微调超参：AdamW lr=5e-5、batch_size=32、BCEWithLogitsLoss、subset 数据量控制",
+                "训练策略：使用正负采样对比学习（构造正负 pair），并保存微调权重用于推理"
+            ]
+        },
+        {
+            "node_index": 44,
+            "insights_from_parent": [
+                "数据预处理：补齐推理流程：为每个插入点构建(prev,next)上下文文本并编码",
+                "特征工程：对插入点与 markdown 生成嵌入并用于相似度计算",
+                "模型选择：加载并使用已微调的 CodeBERT 模型进行推理",
+                "参数调整：确定推理时的 max_length=256、GPU 推理设置，修复嵌入维度处理",
+                "训练策略：无新增训练，重点是补全推理与提交生成逻辑"
+            ]
+        },
+        {
+            "node_index": 45,
+            "insights_from_parent": [
+                "数据预处理：扩展上下文窗口（前2个 code，后1个 code）以构建更丰富的插入点上下文",
+                "特征工程：批量生成插入点与 markdown 嵌入并改用余弦相似度度量",
+                "模型选择：继续使用微调后的 CodeBERT，但增加 max_length 到512 以容纳更长上下文",
+                "参数调整：调整 max_length=512，使用 scipy.cosine 计算相似度，批量推理优化",
+                "训练策略：不再训练，改进相似度计算与上下文建模以提升排序结果"
+            ]
+        },
+        {
+            "node_index": 50,
+            "insights_from_parent": [
+                "数据预处理：修正对 cell id 与 source 的跟踪，确保最终使用真实 cell IDs",
+                "特征工程：修复 md_emb 索引错误，正确计算 markdown 与上下文的相似度",
+                "模型选择：保留微调后的 CodeBERT 推理模型，增强稳健性与异常回退",
+                "参数调整：引入验证子集（n=50）与 Kendall Tau 评估，添加异常处理回退空序列",
+                "训练策略：无新增训练，新增本地验证循环用于度量与调试"
+            ]
+        }
+    ],
+    [
+        {
+            "node_index": 4,
+            "insights_from_parent": [
+                "引入文本嵌入重排"
+            ]
+        },
+        {
+            "node_index": 5,
+            "insights_from_parent": [
+                "数据预处理：修复JSON解析，按顶层cell_id顺序遍历以保留原始单元顺序，避免KeyError；",
+                "特征工程：嵌入生成流程保持不变（对code/markdown文本编码）；",
+                "模型选择：继续使用all-mpnet-base-v2句向量模型；",
+                "参数调整：无显著参数变更，仅保持验证切分策略；",
+                "训练策略：无（仅验证流程不变）；"
+            ]
+        },
+        {
+            "node_index": 7,
+            "insights_from_parent": [
+                "数据预处理：移除为末尾插入位置添加的空字符串占位，确保只对真实code单元生成emb；",
+                "特征工程：确保code_embs与实际code单元一一对应，避免位置偏移导致插入错误；",
+                "模型选择：仍使用同一SentenceTransformer模型；",
+                "参数调整：加入对空code_embs情况的保护逻辑，修正argmax偏移索引；",
+                "训练策略：无变化，主要提高重排一致性和长度一致性；"
+            ]
+        },
+        {
+            "node_index": 20,
+            "insights_from_parent": [
+                "数据预处理：构造插入位置的code上下文（prev+curr或首/尾单元）替代单一code单元；",
+                "特征工程：用相邻code对拼接文本作为context，提升描述转移处的语义信息；",
+                "模型选择：仍用SentenceTransformer，聚焦上下文相似度计算；",
+                "参数调整：相似度计算从单cell->context向量空间进行argmax选择；",
+                "训练策略：验证流程不变，但通过更丰富上下文提高排序质量（Kendall Tau提升预期）；"
+            ]
+        },
+        {
+            "node_index": 21,
+            "insights_from_parent": [
+                "数据预处理：上下文构造扩展为prev+curr+next（更宽的局部窗口）；",
+                "特征工程：用更宽的code上下文文本改善每个插入点的语义覆盖；",
+                "模型选择：从通用文本模型切换到代码专用嵌入（jinaai/jina-embeddings-v2-base-code），提高代码语义捕获能力；",
+                "参数调整：无大幅训练参数更改，但embedding接口变化（模型特性不同）；",
+                "训练策略：同样的验证/提交流程，但期望通过code专用模型提升匹配准确性；"
+            ]
+        },
+        {
+            "node_index": 24,
+            "insights_from_parent": [
+                "数据预处理：强制将string类型的source统一为list以避免TypeError，并对空code上下文做保护；",
+                "特征工程：上下文拼接时确保元素格式一致，避免concat错误；",
+                "模型选择：保持jina代码嵌入模型不变；",
+                "参数调整：增加对空embeddings的分支处理，防止后续计算异常；",
+                "训练策略：无，主要提升稳定性与兼容性；"
+            ]
+        },
+        {
+            "node_index": 25,
+            "insights_from_parent": [
+                "数据预处理：对code/markdown文本进行行级截断（取首尾若干行）以减小输入长度；",
+                "特征工程：通过截断减少噪声并聚焦每个单元的关键信息；",
+                "模型选择：为避免OOM从大型模型切换到轻量模型(all-MiniLM-L6-v2)；",
+                "参数调整：引入batching、truncation、max_length等编码参数以控制显存使用；",
+                "训练策略：无训练改动，主要是推理内存优化与速度权衡；"
+            ]
+        },
+        {
+            "node_index": 28,
+            "insights_from_parent": [
+                "数据预处理：增强鲁棒性（导入torch、创建输出目录、处理空code或markdown情况）；",
+                "特征工程：保持截断与batch编码策略，但使用torch进行相似度/argmax运算以兼容张量流程；",
+                "模型选择：仍使用轻量sentence-transformers模型以节省内存；",
+                "参数调整：无显著超参调整，修复实现细节（torch.argmax替代numpy）避免运行时错误；",
+                "训练策略：验证逻辑略改为跳过长度不匹配样本，提高评估稳定性；"
+            ]
+        },
+        {
+            "node_index": 38,
+            "insights_from_parent": [
+                "数据预处理：扩大代码上下文（前一cell末5行、当前首5行、后一cell首3行），使用markdown首5行；",
+                "特征工程：增加上下文与markdown内容量以提升语义覆盖度；",
+                "模型选择：改回更强的预训练文本模型(all-mpnet-base-v2)以增强文本理解能力；",
+                "参数调整：调整batch_size和truncation策略以满足更大模型的输入需求；",
+                "训练策略：验证流程不变，期望通过更多上下文和更强模型提升Kendall Tau；"
+            ]
+        },
+        {
+            "node_index": 40,
+            "insights_from_parent": [
+                "数据预处理：改为使用完整code单元内容拼接（prev+curr）而非仅几行截断；",
+                "特征工程：用transformers tokenizer + model输出（CLS向量）替代sentence-transformers接口；",
+                "模型选择：从句向量模型切换到CodeBERT (AutoModel) 以利用代码/文本共同表示能力；",
+                "参数调整：引入批量tokenize/truncation(max_length=512)并使用last_hidden_state[:,0,:]作为embedding；",
+                "训练策略：无训练流程变更，但通过更深模型与完整内容期望改善匹配准确率；"
+            ]
+        },
+        {
+            "node_index": 43,
+            "insights_from_parent": [
+                "数据预处理：引入滑动窗口聚合code单元（对code embeddings取窗口均值）以捕获邻近上下文；",
+                "特征工程：处理完整markdown（首10行）并与窗口化code表示计算相似度；",
+                "模型选择：改用CodeBERT-MLM变体（microsoft/codebert-base-mlm）尝试改善code-text语义一致性；",
+                "参数调整：批量大小、tokenizer/truncation和embedding聚合方式（均值）被引入以稳定表示；",
+                "训练策略：验证流程保持，但通过窗口化与更大上下文提升对段落级语义对齐能力；"
+            ]
+        },
+        {
+            "node_index": 48,
+            "insights_from_parent": [
+                "数据预处理：保持按单元tokenize但扩大上下文窗口到3个单元；",
+                "特征工程：用max pooling（而非mean）在窗口内保留显著激活以强化关键token信号；",
+                "模型选择：切回 microsoft/codebert-base（非-mlm），更贴合code-text配对场景；",
+                "参数调整：增加相似度得分缩放(sims*10)以扩大得分差异，改变pooling方法和窗口大小；",
+                "训练策略：无训练改动，目标是通过更鲁棒的上下文聚合与相似度缩放提高排序判别力；"
+            ]
+        },
+        {
+            "node_index": 49,
+            "insights_from_parent": [
+                "数据预处理：按cell合并为字符串后tokenize，验证集采样改为ancestor-aware以提升评估多样性；",
+                "特征工程：采用更大窗口（5）并在窗口内用平均池化聚合code特征以获得平滑全局上下文；",
+                "模型选择：从CodeBERT切换到GraphCodeBERT以利用数据流/图信息增强代码表示能力；",
+                "参数调整：扩大窗口尺寸、维持批次tokenize策略，并保留相似度归一化与缩放以计算匹配；",
+                "训练策略：验证集构建改为基于ancestor分组采样，旨在更真实地评估泛化到不同代码祖先的效果；"
+            ]
+        }
+    ],
+    [
+        {
+            "node_index": 10,
+            "insights_from_parent": [
+                "结构化关键词匹配方法"
+            ]
+        },
+        {
+            "node_index": 11,
+            "insights_from_parent": [
+                "数据预处理：将代码与markdown文本汇总成语料用于向量化",
+                "特征工程：从Jaccard集合相似度切换到TF-IDF向量化",
+                "模型选择：用TF-IDF+余弦相似度替代简单集合相似度规则",
+                "参数调整：使用默认TfidfVectorizer配置（无超参搜索）",
+                "训练策略：保持基于验证集的Kendall Tau评估流程"
+            ]
+        },
+        {
+            "node_index": 12,
+            "insights_from_parent": [
+                "数据预处理：空单元替换为\"[EMPTY]\"，全空或异常回退原序列",
+                "特征工程：保留TF-IDF但加入异常捕获和空文本处理",
+                "模型选择：TF-IDF+余弦匹配策略不变",
+                "参数调整：增加TF-IDF fit异常回退逻辑（无超参改动）",
+                "训练策略：验证采样规模调整为1000以加快验证"
+            ]
+        },
+        {
+            "node_index": 17,
+            "insights_from_parent": [
+                "数据预处理：空单元处理保留（[EMPTY]替换）",
+                "特征工程：TF-IDF改为使用ngram_range=(1,2)和sublinear_tf=True",
+                "模型选择：继续使用基于TF-IDF的检索匹配",
+                "参数调整：调整TF-IDF超参数以捕获二元词组和次线性频率",
+                "训练策略：验证流程不变，继续采样验证集"
+            ]
+        },
+        {
+            "node_index": 26,
+            "insights_from_parent": [
+                "数据预处理：保留空单元占位处理",
+                "特征工程：从TF-IDF切换到BM25（计算TF/DF/IDF、doc_len、avgdl）",
+                "模型选择：用BM25检索模型取代TF-IDF以改善相关性评分",
+                "参数调整：引入BM25默认超参k1=1.5,b=0.75",
+                "训练策略：仍用采样验证评估排序质量（Kendall Tau）"
+            ]
+        },
+        {
+            "node_index": 29,
+            "insights_from_parent": [
+                "数据预处理：为代码与markdown引入更精细的分词流程",
+                "特征工程：代码按驼峰/下划线/点切分，markdown用词边界正则",
+                "模型选择：BM25保留，但输入词项更加语义化和细粒度",
+                "参数调整：BM25参数未变，强调tokenization提升覆盖",
+                "训练策略：验证采样与评估策略保持"
+            ]
+        },
+        {
+            "node_index": 32,
+            "insights_from_parent": [
+                "数据预处理：分词/占位处理不变",
+                "特征工程：使用BM25得分构建位置评分，改为邻近文档得分平均化",
+                "模型选择：BM25仍为核心，插入位置由相邻code平均相关度决定",
+                "参数调整：插入评分策略从最大值改为相邻平均值",
+                "训练策略：验证流程继续采样评估"
+            ]
+        },
+        {
+            "node_index": 34,
+            "insights_from_parent": [
+                "数据预处理：同上",
+                "特征工程：保持BM25与tokenization不变",
+                "模型选择：插入位置评分从相邻平均改回取相邻两侧最大值",
+                "参数调整：再次调整插入评分策略以偏向单侧强相关",
+                "训练策略：验证与评估流程不变"
+            ]
+        },
+        {
+            "node_index": 35,
+            "insights_from_parent": [
+                "数据预处理：无变化",
+                "特征工程：将插入位置评分由max改为相邻得分之和(sum)",
+                "模型选择：BM25保留，结合相邻两侧累计相关性",
+                "参数调整：评分函数改为求和以捕捉双侧关联",
+                "训练策略：验证逻辑保持"
+            ]
+        },
+        {
+            "node_index": 37,
+            "insights_from_parent": [
+                "数据预处理：保持现有tokenization与占位策略",
+                "特征工程：插入评分改为使用下一个（后续）代码单元的得分",
+                "模型选择：BM25保留，但位置判断偏向后续代码相关性",
+                "参数调整：评分规则替换为取后续单元得分",
+                "训练策略：验证流程不变"
+            ]
+        },
+        {
+            "node_index": 39,
+            "insights_from_parent": [
+                "数据预处理：无改动",
+                "特征工程：BM25特征保留，加入超参搜索评估流程",
+                "模型选择：BM25仍为核心，强化通过验证优化模型行为",
+                "参数调整：对k1和b做网格搜索并基于Kendall Tau选最优参数",
+                "训练策略：划分train/val（80/20），使用采样子集评估超参"
+            ]
+        },
+        {
+            "node_index": 42,
+            "insights_from_parent": [
+                "数据预处理：代码分词从regex升级为AST解析提取标识符",
+                "特征工程：基于AST的语义标识符提高了代码-文本匹配质量",
+                "模型选择：继续使用BM25，但输入变得更语义化",
+                "参数调整：保留网格搜索思路，引入并行评估以加速验证",
+                "训练策略：通过multiprocessing并行化process_and_score加速超参验证"
+            ]
+        },
+        {
+            "node_index": 46,
+            "insights_from_parent": [
+                "数据预处理：以OrderedDict加载JSON以保留原有单元顺序",
+                "特征工程：AST分词与BM25保持，增加对无效得分的回退逻辑",
+                "模型选择：BM25继续为核心，增加默认回退参数保证鲁棒性",
+                "参数调整：设置best_params默认回退并跳过无效验证样本",
+                "训练策略：并行验证保留，增加错误处理与无有效分数的检查"
+            ]
+        },
+        {
+            "node_index": 47,
+            "insights_from_parent": [
+                "数据预处理：无实质变更",
+                "特征工程：同上（AST+BM25）",
+                "模型选择：不变，主要是工程级改进以支持并行",
+                "参数调整：对测试处理使用固定参数(k1=1.5,b=0.75)作为简化",
+                "训练策略：将并行处理置于if __name__=='__main__'，修复multiprocessing可序列化问题并使用绝对路径"
+            ]
+        }
+    ]
+]
