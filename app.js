@@ -9,7 +9,9 @@ const state = {
     currentNodeIndex: 0,
     nodeSequence: [],
     previousNode: null, // 记录上一个节点用于比较变化
-    playbackSpeed: 1.0 // 播放速度倍数
+    playbackSpeed: 1.0, // 播放速度倍数
+    tabNavigationIndex: -1, // Tab键导航的当前节点索引（-1表示未开始）
+    staticDFSSequence: [] // 静态模式下的DFS序列
 };
 
 // DOM元素
@@ -1328,6 +1330,30 @@ function renderTree(root) {
     const svg = d3.select('#tree-svg');
     svg.selectAll('*').remove();
 
+    // 构建静态模式下的DFS序列，用于Tab键导航
+    // 先创建hierarchy，然后基于hierarchy节点进行DFS遍历
+    const hierarchyRoot = d3.hierarchy(root);
+    
+    // 使用DFS递归遍历构建序列（确保是真正的深度优先搜索顺序）
+    const dfsSequence = [];
+    function dfsTraverse(node) {
+        if (!node) return;
+        // 将当前节点加入序列
+        dfsSequence.push({
+            node_index: node.data.node_index,
+            data: node.data
+        });
+        // 递归遍历子节点（深度优先）
+        if (node.children && node.children.length > 0) {
+            node.children.forEach(child => dfsTraverse(child));
+        }
+    }
+    dfsTraverse(hierarchyRoot);
+    
+    state.staticDFSSequence = dfsSequence;
+    state.tabNavigationIndex = -1; // 重置Tab导航索引
+    console.log(`📋 Static DFS sequence built: ${state.staticDFSSequence.length} nodes`, state.staticDFSSequence.map(n => n.node_index));
+
     const rect = elements.treeSvg.getBoundingClientRect();
     const width = rect.width || elements.treeSvg.clientWidth || 960;
     const height = rect.height || elements.treeSvg.clientHeight || 620;
@@ -1372,8 +1398,7 @@ function renderTree(root) {
 
     const g = svg.append('g').attr('class', 'tree-root');
 
-    // 先创建hierarchy来分析树的大小
-    const hierarchyRoot = d3.hierarchy(root);
+    // 复用之前创建的hierarchyRoot来分析树的大小
     
     // 分析树的大小：节点数量、最大深度、叶子节点数量
     const nodes = hierarchyRoot.descendants();
@@ -1471,6 +1496,7 @@ function renderTree(root) {
             return 'node normal';
         })
         .attr('transform', d => `translate(${d.y},${d.x})`) // 水平布局：y是x，x是y
+        .attr('data-node-index', d => d.data.node_index) // 添加data-node-index属性，用于Tab导航查找节点
         .style('opacity', 0)
         .on('click', (event, d) => {
             event.stopPropagation();
@@ -1651,6 +1677,285 @@ function selectNode(target, node) {
     d3.select('#tree-svg').selectAll('.node').classed('selected', false);
     d3.select(target).classed('selected', true);
     renderNodeDetails(node.data);
+    
+    // 更新Tab导航索引到当前节点
+    if (state.staticDFSSequence && state.staticDFSSequence.length > 0) {
+        const nodeIndex = node.data.node_index;
+        const index = state.staticDFSSequence.findIndex(n => n.node_index === nodeIndex);
+        if (index !== -1) {
+            state.tabNavigationIndex = index;
+        }
+    }
+}
+
+// 在静态模式下居中显示节点
+function centerNodeInView(nodeData, targetScale = 1.8) {
+    if (!nodeData) {
+        console.warn('⚠️ centerNodeInView: No nodeData provided');
+        return;
+    }
+    
+    const svg = d3.select('#tree-svg');
+    if (svg.empty()) {
+        console.error('❌ SVG element not found!');
+        return;
+    }
+    
+    // 使用getBoundingClientRect获取实际可视区域尺寸
+    const rect = elements.treeSvg.getBoundingClientRect();
+    const width = rect.width || elements.treeSvg.clientWidth || 960;
+    const height = rect.height || elements.treeSvg.clientHeight || 620;
+    
+    // 节点在树布局中的坐标（水平布局：x是y，y是x）
+    const nodeX = nodeData.y !== undefined ? nodeData.y : 0;
+    const nodeY = nodeData.x !== undefined ? nodeData.x : 0;
+    
+    // 计算平移量，使节点精确居中到屏幕中央
+    const translateX = width / 2 - nodeX * targetScale;
+    const translateY = height / 2 - nodeY * targetScale;
+    
+    // 创建新的变换矩阵
+    const newTransform = d3.zoomIdentity
+        .translate(translateX, translateY)
+        .scale(targetScale);
+    
+    // 使用state中保存的zoom行为
+    const zoomBehavior = state.zoomBehavior;
+    if (!zoomBehavior) {
+        console.error('❌ Zoom behavior not found! Cannot center node.');
+        return;
+    }
+    
+    // 平滑过渡到新位置
+    svg.transition()
+        .duration(600)
+        .ease(d3.easeCubicInOut)
+        .call(zoomBehavior.transform, newTransform);
+}
+
+// Tab键导航到下一个节点（DFS序）- 带惊艳动画效果
+function navigateToNextNode() {
+    // 只在静态模式下工作（不在播放模式）
+    if (state.isPlaying) {
+        console.log('⚠️ Tab navigation disabled during playback');
+        return;
+    }
+    
+    // 检查是否有DFS序列
+    if (!state.staticDFSSequence || state.staticDFSSequence.length === 0) {
+        console.warn('⚠️ No DFS sequence available for Tab navigation');
+        return;
+    }
+    
+    // 保存上一个节点的索引（用于清除高亮）
+    const prevIndex = state.tabNavigationIndex;
+    
+    // 如果还没有开始导航，从第一个节点开始；否则移动到下一个节点
+    if (state.tabNavigationIndex < 0) {
+        state.tabNavigationIndex = 0;
+    } else {
+        state.tabNavigationIndex = (state.tabNavigationIndex + 1) % state.staticDFSSequence.length;
+    }
+    
+    const currentNode = state.staticDFSSequence[state.tabNavigationIndex];
+    const nodeIndex = currentNode.node_index;
+    
+    console.log(`🔍 Tab navigation: index=${state.tabNavigationIndex}, node=${nodeIndex}`);
+    
+    // 在SVG中找到对应的节点
+    const nodeGroup = d3.select(`#tree-svg [data-node-index="${nodeIndex}"]`);
+    
+    if (nodeGroup.empty()) {
+        console.warn(`⚠️ Node ${nodeIndex} not found in SVG, skipping...`);
+        // 如果找不到节点，尝试下一个
+        if (state.tabNavigationIndex < state.staticDFSSequence.length - 1) {
+            state.tabNavigationIndex++;
+            navigateToNextNode();
+        }
+        return;
+    }
+    
+    // 获取节点数据
+    const nodeData = nodeGroup.datum();
+    
+    // 清除之前节点的选中和高亮状态
+    d3.select('#tree-svg').selectAll('.node').classed('selected', false).classed('tab-navigating', false);
+    
+    // 如果是第一个节点（根节点），直接显示动画
+    if (state.tabNavigationIndex === 0) {
+        // 先居中显示节点
+        centerNodeInView(nodeData, 1.8);
+        
+        // 节点出现动画
+        nodeGroup.transition()
+            .duration(400)
+            .ease(d3.easeCubicOut)
+            .style('opacity', 1);
+        
+        nodeGroup.select('text')
+            .transition()
+            .delay(200)
+            .duration(300)
+            .ease(d3.easeCubicOut)
+            .style('opacity', 0.95);
+        
+        // 高亮当前节点
+        nodeGroup.classed('selected', true).classed('tab-navigating', true);
+        
+        // 节点脉冲动画
+        setTimeout(() => {
+            nodeGroup.classed('tab-navigating', false);
+        }, 800);
+        
+        // 显示节点详情
+        state.selectedNode = nodeData;
+        if (!nodeData.data.is_virtual) {
+            renderNodeDetails(nodeData.data);
+        } else {
+            resetNodeDetails();
+        }
+        
+        return;
+    }
+    
+    // 非根节点：先播放连线动画，再显示节点
+    if (nodeData && nodeData.parent) {
+        // 确保父节点已显示并高亮
+        const parentNodeGroup = d3.select(`#tree-svg [data-node-index="${nodeData.parent.data.node_index}"]`);
+        if (!parentNodeGroup.empty()) {
+            parentNodeGroup.transition()
+                .duration(200)
+                .style('opacity', 1);
+            parentNodeGroup.select('text')
+                .transition()
+                .duration(200)
+                .style('opacity', 0.95);
+        }
+        
+        // 找到父节点到当前节点的连线
+        const parentLink = d3.selectAll(`#tree-svg .link`)
+            .filter(function() {
+                const linkData = d3.select(this).datum();
+                if (!linkData || !linkData.source || !linkData.target) return false;
+                
+                const sourceIndex = linkData.source.data.node_index;
+                const targetIndex = linkData.target.data.node_index;
+                const parentIndex = nodeData.parent ? nodeData.parent.data.node_index : null;
+                
+                return sourceIndex === parentIndex && targetIndex === nodeIndex;
+            });
+        
+        if (!parentLink.empty()) {
+            // 先开始跟踪到新节点位置（连线动画开始时镜头就开始移动）
+            centerNodeInView(nodeData, 1.8);
+            
+            // 播放连线动画
+            parentLink.classed('link-flash', true);
+            
+            // 获取连线总长度，用于动画
+            const totalLength = parentLink.node().getTotalLength();
+            
+            // 初始状态：连线不可见（使用stroke-dasharray动画）
+            parentLink
+                .attr('stroke-dasharray', totalLength + ' ' + totalLength)
+                .attr('stroke-dashoffset', totalLength)
+                .style('opacity', 1);
+            
+            // 动画显示连线（从父节点到新节点的位置）
+            parentLink.transition()
+                .duration(600)
+                .ease(d3.easeCubicOut)
+                .attr('stroke-dashoffset', 0)
+                .on('end', function() {
+                    // 连线动画完成后，闪烁效果（只闪烁一次）
+                    const link = d3.select(this);
+                    let flashCount = 0;
+                    const flashInterval = setInterval(() => {
+                        flashCount++;
+                        link.style('stroke-width', flashCount % 2 === 0 ? '5px' : '3px');
+                        if (flashCount >= 2) {
+                            clearInterval(flashInterval);
+                            link.style('stroke-width', '3px');
+                            link.classed('link-flash', false);
+                            
+                            // 闪烁完成后，显示新节点（惊艳的出现动画）
+                            nodeGroup.transition()
+                                .duration(400)
+                                .ease(d3.easeCubicOut)
+                                .style('opacity', 1)
+                                .on('start', function() {
+                                    // 节点出现时添加高亮效果
+                                    nodeGroup.classed('selected', true).classed('tab-navigating', true);
+                                });
+                            
+                            nodeGroup.select('text')
+                                .transition()
+                                .delay(200)
+                                .duration(300)
+                                .ease(d3.easeCubicOut)
+                                .style('opacity', 0.95);
+                            
+                            // 节点脉冲动画持续一段时间后取消
+                            setTimeout(() => {
+                                nodeGroup.classed('tab-navigating', false);
+                            }, 800);
+                            
+                            // 显示节点详情
+                            state.selectedNode = nodeData;
+                            if (!nodeData.data.is_virtual) {
+                                renderNodeDetails(nodeData.data);
+                            } else {
+                                resetNodeDetails();
+                            }
+                        }
+                    }, 150);
+                });
+        } else {
+            // 如果没有找到连线，直接显示节点
+            centerNodeInView(nodeData, 1.8);
+            
+            nodeGroup.transition()
+                .duration(400)
+                .ease(d3.easeCubicOut)
+                .style('opacity', 1)
+                .on('start', function() {
+                    nodeGroup.classed('selected', true).classed('tab-navigating', true);
+                });
+            
+            nodeGroup.select('text')
+                .transition()
+                .delay(200)
+                .duration(300)
+                .ease(d3.easeCubicOut)
+                .style('opacity', 0.95);
+            
+            setTimeout(() => {
+                nodeGroup.classed('tab-navigating', false);
+            }, 800);
+            
+            state.selectedNode = nodeData;
+            if (!nodeData.data.is_virtual) {
+                renderNodeDetails(nodeData.data);
+            } else {
+                resetNodeDetails();
+            }
+        }
+    } else {
+        // 没有父节点的情况（应该是根节点，但已经在上面处理了）
+        centerNodeInView(nodeData, 1.8);
+        nodeGroup.classed('selected', true).classed('tab-navigating', true);
+        
+        setTimeout(() => {
+            nodeGroup.classed('tab-navigating', false);
+        }, 800);
+        
+        state.selectedNode = nodeData;
+        if (!nodeData.data.is_virtual) {
+            renderNodeDetails(nodeData.data);
+        } else {
+            resetNodeDetails();
+        }
+    }
 }
 
 // 渲染节点详情
@@ -2048,8 +2353,8 @@ function setupEventListeners() {
     
     // 键盘导航支持
     document.addEventListener('keydown', (e) => {
-        // 只在tree-viewer页面且已选择节点时响应
-        if (!elements.treeViewer.classList.contains('active') || !state.selectedNode) {
+        // 只在tree-viewer页面时响应
+        if (!elements.treeViewer.classList.contains('active')) {
             return;
         }
         
@@ -2058,8 +2363,15 @@ function setupEventListeners() {
             return;
         }
         
-        // 左右箭头键切换section
-        if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+        // Tab键导航到下一个节点（DFS序）
+        if (e.key === 'Tab') {
+            e.preventDefault(); // 阻止默认的Tab行为（切换焦点）
+            navigateToNextNode();
+            return;
+        }
+        
+        // 左右箭头键切换section（仅在已选择节点时）
+        if (state.selectedNode && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) {
             e.preventDefault();
             
             if (!state.switchSection) return;
