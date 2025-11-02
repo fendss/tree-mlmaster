@@ -290,6 +290,9 @@ function stopPlayback() {
     // 清除所有节点的playing状态
     d3.select('#tree-svg').selectAll('.node').classed('playing', false);
     
+    // 清除所有连线的高亮状态
+    d3.select('#tree-svg').selectAll('.link').classed('link-flash', false);
+    
     if (elements.playIcon && elements.pauseIcon) {
         elements.playIcon.style.display = 'block';
         elements.pauseIcon.style.display = 'none';
@@ -585,10 +588,87 @@ function renderTreeForPlayback(root) {
     state.zoomBehavior = zoom;
 
     elements.resetViewBtn.onclick = () => {
-        svg.transition()
-            .duration(650)
-            .ease(d3.easeCubicOut)
-            .call(zoom.transform, initialTransform);
+        // 如果正在播放，先停止播放
+        if (state.isPlaying) {
+            stopPlayback();
+        }
+        
+        // 显示完整的树：所有节点和连线都可见
+        d3.select('#tree-svg').selectAll('.node')
+            .transition()
+            .duration(400)
+            .style('opacity', 1);
+        
+        d3.select('#tree-svg').selectAll('.node text')
+            .transition()
+            .duration(400)
+            .style('opacity', 0.95);
+        
+        d3.select('#tree-svg').selectAll('.link')
+            .transition()
+            .duration(400)
+            .style('opacity', 1)
+            .attr('stroke-dashoffset', 0);
+        
+        // 清除所有节点的选中和高亮状态
+        d3.select('#tree-svg').selectAll('.node').classed('selected', false).classed('playing', false);
+        d3.select('#tree-svg').selectAll('.link').classed('link-flash', false);
+        
+        // 重置节点详情
+        resetNodeDetails();
+        
+        // 计算根节点位置并居中显示
+        if (state.currentTree && state.nodeSequence && state.nodeSequence.length > 0) {
+            const rootNode = state.nodeSequence[0];
+            const rootNodeIndex = rootNode.node_index;
+            const rootNodeGroup = d3.select(`#tree-svg [data-node-index="${rootNodeIndex}"]`);
+            
+            if (!rootNodeGroup.empty()) {
+                const rootNodeData = rootNodeGroup.datum();
+                
+                // 等待节点和连线显示完成后，跟踪根节点到中央
+                setTimeout(() => {
+                    // 计算合适的缩放比例，使整个树可见
+                    const rect = elements.treeSvg.getBoundingClientRect();
+                    const width = rect.width || elements.treeSvg.clientWidth || 960;
+                    const height = rect.height || elements.treeSvg.clientHeight || 620;
+                    
+                    // 获取树的边界框
+                    const g = d3.select('#tree-svg g');
+                    const box = g.node().getBBox();
+                    
+                    // 计算合适的缩放比例，使整个树可见，但不要太小
+                    const scale = Math.min(
+                        (width - 200) / box.width,
+                        (height - 160) / box.height,
+                        2.0 // 最大缩放限制
+                    );
+                    
+                    // 计算平移量，使根节点在中央
+                    const nodeX = rootNodeData.y !== undefined ? rootNodeData.y : box.x + box.width / 2;
+                    const nodeY = rootNodeData.x !== undefined ? rootNodeData.x : box.y + box.height / 2;
+                    
+                    const translateX = width / 2 - nodeX * scale;
+                    const translateY = height / 2 - nodeY * scale;
+                    
+                    const transform = d3.zoomIdentity
+                        .translate(translateX, translateY)
+                        .scale(scale);
+                    
+                    // 平滑过渡到新视图
+                    svg.transition()
+                        .duration(800)
+                        .ease(d3.easeCubicOut)
+                        .call(zoom.transform, transform);
+                }, 450); // 等待节点和连线显示动画完成
+            }
+        } else {
+            // 如果没有根节点信息，使用初始变换
+            svg.transition()
+                .duration(650)
+                .ease(d3.easeCubicOut)
+                .call(zoom.transform, initialTransform);
+        }
     };
 
     elements.fitScreenBtn.onclick = () => {
@@ -1456,10 +1536,87 @@ function renderTree(root) {
     state.zoomBehavior = zoom;
 
     elements.resetViewBtn.onclick = () => {
-        svg.transition()
-            .duration(650)
-            .ease(d3.easeCubicOut)
-            .call(zoom.transform, initialTransform);
+        // 如果正在播放，先停止播放
+        if (state.isPlaying) {
+            stopPlayback();
+        }
+        
+        // 显示完整的树：所有节点和连线都可见
+        d3.select('#tree-svg').selectAll('.node')
+            .transition()
+            .duration(400)
+            .style('opacity', 1);
+        
+        d3.select('#tree-svg').selectAll('.node text')
+            .transition()
+            .duration(400)
+            .style('opacity', 0.95);
+        
+        d3.select('#tree-svg').selectAll('.link')
+            .transition()
+            .duration(400)
+            .style('opacity', 1)
+            .attr('stroke-dashoffset', 0);
+        
+        // 清除所有节点的选中和高亮状态
+        d3.select('#tree-svg').selectAll('.node').classed('selected', false).classed('playing', false);
+        d3.select('#tree-svg').selectAll('.link').classed('link-flash', false);
+        
+        // 重置节点详情
+        resetNodeDetails();
+        
+        // 计算根节点位置并居中显示
+        if (state.currentTree && state.nodeSequence && state.nodeSequence.length > 0) {
+            const rootNode = state.nodeSequence[0];
+            const rootNodeIndex = rootNode.node_index;
+            const rootNodeGroup = d3.select(`#tree-svg [data-node-index="${rootNodeIndex}"]`);
+            
+            if (!rootNodeGroup.empty()) {
+                const rootNodeData = rootNodeGroup.datum();
+                
+                // 等待节点和连线显示完成后，跟踪根节点到中央
+                setTimeout(() => {
+                    // 计算合适的缩放比例，使整个树可见
+                    const rect = elements.treeSvg.getBoundingClientRect();
+                    const width = rect.width || elements.treeSvg.clientWidth || 960;
+                    const height = rect.height || elements.treeSvg.clientHeight || 620;
+                    
+                    // 获取树的边界框
+                    const g = d3.select('#tree-svg g');
+                    const box = g.node().getBBox();
+                    
+                    // 计算合适的缩放比例，使整个树可见，但不要太小
+                    const scale = Math.min(
+                        (width - 200) / box.width,
+                        (height - 160) / box.height,
+                        2.0 // 最大缩放限制
+                    );
+                    
+                    // 计算平移量，使根节点在中央
+                    const nodeX = rootNodeData.y !== undefined ? rootNodeData.y : box.x + box.width / 2;
+                    const nodeY = rootNodeData.x !== undefined ? rootNodeData.x : box.y + box.height / 2;
+                    
+                    const translateX = width / 2 - nodeX * scale;
+                    const translateY = height / 2 - nodeY * scale;
+                    
+                    const transform = d3.zoomIdentity
+                        .translate(translateX, translateY)
+                        .scale(scale);
+                    
+                    // 平滑过渡到新视图
+                    svg.transition()
+                        .duration(800)
+                        .ease(d3.easeCubicOut)
+                        .call(zoom.transform, transform);
+                }, 450); // 等待节点和连线显示动画完成
+            }
+        } else {
+            // 如果没有根节点信息，使用初始变换
+            svg.transition()
+                .duration(650)
+                .ease(d3.easeCubicOut)
+                .call(zoom.transform, initialTransform);
+        }
     };
 
     elements.fitScreenBtn.onclick = () => {
