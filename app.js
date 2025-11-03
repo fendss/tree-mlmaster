@@ -11,7 +11,11 @@ const state = {
     previousNode: null, // 记录上一个节点用于比较变化
     playbackSpeed: 1.0, // 播放速度倍数
     tabNavigationIndex: -1, // Tab键导航的当前节点索引（-1表示未开始）
-    staticDFSSequence: [] // 静态模式下的DFS序列
+    staticDFSSequence: [], // 静态模式下的DFS序列
+    highlightedNodesSequence: [], // 高亮节点序列（metric大于所有祖先的节点）
+    highlightedNavigationIndex: -1, // 高亮节点导航的当前索引（-1表示未开始）
+    isHighlightView: false, // 是否显示简化树（只显示高亮节点和根节点的直接子节点）
+    originalTree: null // 保存原始完整树
 };
 
 // DOM元素
@@ -33,7 +37,8 @@ const elements = {
     playbackChanges: document.getElementById('playback-changes'),
     currentNodeIndicator: document.getElementById('current-node-indicator'),
     totalNodesIndicator: document.getElementById('total-nodes-indicator'),
-    playbackSpeed: document.getElementById('playback-speed')
+    playbackSpeed: document.getElementById('playback-speed'),
+    highlightViewBtn: document.getElementById('highlight-view-btn')
 };
 
 const DETAILS_PLACEHOLDER_HTML = `
@@ -192,10 +197,17 @@ async function selectCompetition(competition) {
     // 停止任何正在进行的播放
     stopPlayback();
     
+    // 重置视图模式
+    state.isHighlightView = false;
+    if (elements.highlightViewBtn) {
+        elements.highlightViewBtn.classList.remove('active');
+    }
+    
     try {
         const response = await fetch(`struct_out/${competition.filename}`);
         const data = await response.json();
-        state.currentTree = buildTreeStructure(data);
+        state.originalTree = buildTreeStructure(data);
+        state.currentTree = state.originalTree;
         
         resetNodeDetails();
         showPage('tree-viewer');
@@ -245,6 +257,170 @@ function buildTreeStructure(data) {
     }
     
     return roots[0] || nodeMap.values().next().value;
+}
+
+// 构建简化树（只包含根节点和高亮节点，保留高亮节点之间的路径）
+function buildHighlightTree(originalTree, highlightedNodeIndices) {
+    if (!originalTree) return originalTree;
+    
+    const highlightedSet = new Set(highlightedNodeIndices || []);
+    console.log('🔍 buildHighlightTree - highlighted nodes:', Array.from(highlightedSet));
+    
+    // 创建节点映射
+    const nodeMap = new Map();
+    function collectNodes(node) {
+        if (!node) return;
+        nodeMap.set(node.node_index, node);
+        if (node.children && Array.isArray(node.children)) {
+            node.children.forEach(child => collectNodes(child));
+        }
+    }
+    collectNodes(originalTree);
+    
+    // 收集所有需要保留的节点：根节点 + 高亮节点 + 根节点的第一个非bug子节点
+    const nodesToKeep = new Set();
+    nodesToKeep.add(originalTree.node_index); // 根节点
+    highlightedNodeIndices?.forEach(index => nodesToKeep.add(index)); // 高亮节点
+    
+    // 添加根节点的第一个非bug子节点
+    if (originalTree.children && Array.isArray(originalTree.children) && originalTree.children.length > 0) {
+        const firstNonBugChild = originalTree.children.find(child => {
+            return child && (child.is_bug !== 'True' && child.is_bug !== true);
+        });
+        if (firstNonBugChild && !highlightedSet.has(firstNonBugChild.node_index)) {
+            nodesToKeep.add(firstNonBugChild.node_index);
+            console.log('✨ Added first non-bug child:', firstNonBugChild.node_index);
+        }
+    }
+    
+    console.log('📊 Nodes to keep:', Array.from(nodesToKeep));
+    
+    // 为每个保留节点找到其在简化树中的父节点（向上查找最近的保留节点）
+    function findParentInSimplifiedTree(nodeIndex) {
+        const node = nodeMap.get(nodeIndex);
+        if (!node) return originalTree.node_index;
+        
+        // 从父节点开始向上查找（不包括自己）
+        let currentNode = node;
+        while (currentNode && currentNode.parent_index) {
+            currentNode = nodeMap.get(currentNode.parent_index);
+            if (!currentNode) break;
+            
+            // 如果是根节点，返回根节点
+            if (currentNode.node_index === originalTree.node_index || currentNode.node_index === 'root') {
+                return originalTree.node_index;
+            }
+            
+            // 如果当前节点在保留集合中，返回该节点
+            if (nodesToKeep.has(currentNode.node_index)) {
+                return currentNode.node_index;
+            }
+        }
+        
+        return originalTree.node_index;
+    }
+    
+    // 构建父子关系映射
+    const parentMap = new Map();
+    nodesToKeep.forEach(nodeIndex => {
+        if (nodeIndex !== originalTree.node_index && nodeIndex !== 'root') {
+            const parent = findParentInSimplifiedTree(nodeIndex);
+            if (parent !== nodeIndex) {
+                parentMap.set(nodeIndex, parent);
+                console.log(`🔗 ${nodeIndex} -> ${parent}`);
+            }
+        }
+    });
+    
+    console.log('🔗 Parent map:', Array.from(parentMap.entries()));
+    
+    // 构建简化树
+    function buildSimplifiedNode(nodeIndex) {
+        if (!nodesToKeep.has(nodeIndex)) return null;
+        
+        const node = nodeMap.get(nodeIndex);
+        if (!node) return null;
+        
+        const simplifiedNode = { ...node, children: [] };
+        
+        // 找到所有以当前节点为父节点的子节点
+        const childIndices = [];
+        parentMap.forEach((parentIndex, childIndex) => {
+            if (parentIndex === nodeIndex) {
+                childIndices.push(childIndex);
+            }
+        });
+        
+        console.log(`📦 Node ${nodeIndex} has children:`, childIndices);
+        
+        // 递归构建子节点
+        simplifiedNode.children = childIndices
+            .map(childIndex => buildSimplifiedNode(childIndex))
+            .filter(Boolean);
+        
+        return simplifiedNode;
+    }
+    
+    const result = buildSimplifiedNode(originalTree.node_index || 'root');
+    console.log('🌳 Result tree:', result);
+    return result;
+}
+
+// 切换视图模式（完整树 vs 简化树）
+function toggleHighlightView() {
+    if (!state.originalTree) {
+        console.warn('⚠️ No original tree available');
+        return;
+    }
+    
+    // 停止播放
+    if (state.isPlaying) {
+        stopPlayback();
+    }
+    
+    // 切换视图模式
+    state.isHighlightView = !state.isHighlightView;
+    
+    // 更新按钮状态
+    if (elements.highlightViewBtn) {
+        if (state.isHighlightView) {
+            elements.highlightViewBtn.classList.add('active');
+        } else {
+            elements.highlightViewBtn.classList.remove('active');
+        }
+    }
+    
+    // 根据模式选择要渲染的树
+    if (state.isHighlightView) {
+        // 如果高亮节点序列还没有构建，先构建一次完整树来生成序列
+        if (!state.highlightedNodesSequence || state.highlightedNodesSequence.length === 0) {
+            console.log('⚠️ Highlighted nodes sequence not built yet, building it now...');
+            // 先渲染一次完整树来构建高亮节点序列
+            renderTree(state.originalTree);
+            // 等待序列构建完成
+            setTimeout(() => {
+                const highlightedIndices = state.highlightedNodesSequence.map(n => n.node_index);
+                state.currentTree = buildHighlightTree(state.originalTree, highlightedIndices);
+                resetNodeDetails();
+                setTimeout(() => renderTree(state.currentTree), 100);
+            }, 200);
+            return;
+        }
+        
+        // 构建简化树
+        const highlightedIndices = state.highlightedNodesSequence.map(n => n.node_index);
+        console.log('✨ Building highlight tree with indices:', highlightedIndices);
+        state.currentTree = buildHighlightTree(state.originalTree, highlightedIndices);
+        console.log('✨ Switched to highlight view');
+    } else {
+        // 恢复完整树
+        state.currentTree = state.originalTree;
+        console.log('📋 Switched to full tree view');
+    }
+    
+    // 重新渲染树
+    resetNodeDetails();
+    setTimeout(() => renderTree(state.currentTree), 100);
 }
 
 // 构建DFS遍历序列
@@ -415,6 +591,17 @@ function renderTreeForPlayback(root) {
         .attr('y2', 0); // 改回水平渐变
     gradient.append('stop').attr('offset', '0%').attr('stop-color', 'rgba(96,165,250,0.75)');
     gradient.append('stop').attr('offset', '100%').attr('stop-color', 'rgba(129,140,248,0.65)');
+    
+    // 高亮路径的渐变（更亮的紫色）
+    const highlightGradient = defs.append('linearGradient')
+        .attr('id', 'tree-link-gradient-highlight')
+        .attr('gradientUnits', 'userSpaceOnUse')
+        .attr('x1', 0)
+        .attr('y1', 0)
+        .attr('x2', width)
+        .attr('y2', 0);
+    highlightGradient.append('stop').attr('offset', '0%').attr('stop-color', 'rgba(167,139,250,0.9)');
+    highlightGradient.append('stop').attr('offset', '100%').attr('stop-color', 'rgba(196,181,253,0.85)');
 
     const glow = defs.append('filter')
         .attr('id', 'node-glow')
@@ -504,14 +691,67 @@ function renderTreeForPlayback(root) {
         .x(d => d.y)  // 水平布局：x是y
         .y(d => d.x); // 水平布局：y是x
 
+    // 为每个hierarchy节点添加高亮标记
+    nodes.forEach(node => {
+        node.isHighlighted = isMetricBetterThanAllAncestors(node);
+    });
+    
+    // 找到所有高亮节点，并标记从根到这些节点的路径
+    const highlightedNodes = nodes.filter(node => node.isHighlighted);
+    const pathNodeIndices = new Set(); // 存储路径上所有节点的索引
+    const pathLinkPairs = new Set(); // 存储路径上的连线对 (sourceIndex-targetIndex)
+    
+    // 对于每个高亮节点，找到从根到它的路径
+    highlightedNodes.forEach(highlightedNode => {
+        let currentNode = highlightedNode;
+        // 从当前节点向上遍历到根节点
+        while (currentNode) {
+            pathNodeIndices.add(currentNode.data.node_index);
+            // 如果有父节点，记录父子连线
+            if (currentNode.parent) {
+                const parentIndex = currentNode.parent.data.node_index;
+                const childIndex = currentNode.data.node_index;
+                pathLinkPairs.add(`${parentIndex}-${childIndex}`);
+            }
+            currentNode = currentNode.parent;
+        }
+    });
+
     // 渲染所有链接（初始隐藏）
     const linkSelection = g.selectAll('.link')
         .data(links)
         .enter()
         .append('path')
-        .attr('class', 'link')
-        .attr('stroke', 'url(#tree-link-gradient)')
-        .attr('stroke-width', '3px')
+        .attr('class', d => {
+            const sourceIndex = d.source.data.node_index;
+            const targetIndex = d.target.data.node_index;
+            const linkKey = `${sourceIndex}-${targetIndex}`;
+            // 如果连线在路径上，添加path-highlight类
+            if (pathLinkPairs.has(linkKey)) {
+                return 'link path-highlight';
+            }
+            return 'link';
+        })
+        .attr('stroke', d => {
+            const sourceIndex = d.source.data.node_index;
+            const targetIndex = d.target.data.node_index;
+            const linkKey = `${sourceIndex}-${targetIndex}`;
+            // 如果连线在路径上，使用高亮渐变色
+            if (pathLinkPairs.has(linkKey)) {
+                return 'url(#tree-link-gradient-highlight)';
+            }
+            return 'url(#tree-link-gradient)';
+        })
+        .attr('stroke-width', d => {
+            const sourceIndex = d.source.data.node_index;
+            const targetIndex = d.target.data.node_index;
+            const linkKey = `${sourceIndex}-${targetIndex}`;
+            // 如果连线在路径上，使用更粗的线条
+            if (pathLinkPairs.has(linkKey)) {
+                return '4px';
+            }
+            return '3px';
+        })
         .attr('stroke-linecap', 'round')
         .attr('d', linkGenerator)
         .style('opacity', 0)
@@ -529,10 +769,28 @@ function renderTreeForPlayback(root) {
         .enter()
         .append('g')
         .attr('class', d => {
-            if (d.data.is_virtual) return 'node virtual root-node';
-            if (d.data.is_bug === 'True' || d.data.is_bug === true) return 'node bug';
-            if (d.data.metric !== null && d.data.metric !== undefined) return 'node success';
-            return 'node normal';
+            let classes = [];
+            if (d.data.is_virtual) {
+                classes.push('node', 'virtual', 'root-node');
+            } else {
+                classes.push('node');
+                if (d.data.is_bug === 'True' || d.data.is_bug === true) {
+                    classes.push('bug');
+                } else if (d.data.metric !== null && d.data.metric !== undefined) {
+                    classes.push('success');
+                } else {
+                    classes.push('normal');
+                }
+                // 如果是高亮节点（metric大于所有祖先），添加metric-highlight类
+                if (d.isHighlighted) {
+                    classes.push('metric-highlight');
+                }
+                // 如果节点在路径上，添加path-highlight类
+                if (pathNodeIndices.has(d.data.node_index)) {
+                    classes.push('path-highlight');
+                }
+            }
+            return classes.join(' ');
         })
         .attr('transform', d => `translate(${d.y},${d.x})`) // 水平布局：y是x，x是y
         .attr('data-node-index', d => d.data.node_index)
@@ -1088,13 +1346,23 @@ function playNextNode() {
 function renderPlaybackChanges(currentNode, previousNode) {
     if (!elements.playbackChanges) return;
     
+    // 使用正则表达式过滤changes中包含"不变"、"不xx改变"、"沿用"、"保持"的条目
     const filteredInsights = currentNode.insights_from_parent && Array.isArray(currentNode.insights_from_parent)
         ? currentNode.insights_from_parent.filter(item => {
-            const text = String(item || '').trim().toLowerCase();
-            return text && 
-                   !text.includes('无') && 
-                   !text.includes('无变化') && 
-                   !text.includes('无新增');
+            const text = String(item || '').trim();
+            if (!text) return false;
+            
+            // 过滤掉包含以下关键词的条目：不变、不改变、沿用、保持、无
+            const patterns = [
+                /不变/,                          // 匹配"不变"
+                /不[^变]*改变/,                    // 匹配"不改变"、"不xx改变"等
+                /沿用/,                          // 匹配"沿用"
+                /保持/,                          // 匹配"保持"
+                /无/                             // 匹配所有包含"无"的条目
+            ];
+            
+            // 如果匹配到任何一个模式，则过滤掉
+            return !patterns.some(pattern => pattern.test(text));
         })
         : [];
     
@@ -1152,11 +1420,7 @@ function renderPlaybackChanges(currentNode, previousNode) {
                             `).join('')}
                         </ul>
                     </div>
-                ` : `
-                    <div class="no-changes">
-                        <p>No significant changes detected</p>
-                    </div>
-                `}
+                ` : ''}
             </div>
         `;
     } else {
@@ -1208,32 +1472,44 @@ function renderNodeDetailsForPlayback(node) {
     const nodeAnalysisHtml = formatNodeAnalysis(node.node_level_analysis);
     const codeHtml = escapeHtml(node.code || '// No code available');
     
-    // 过滤changes中包含"无"、"无变化"、"无新增"的条目
+    // 使用正则表达式过滤changes中包含"不变"、"不xx改变"、"沿用"、"保持"的条目
     const filteredInsights = node.insights_from_parent && Array.isArray(node.insights_from_parent)
         ? node.insights_from_parent.filter(item => {
-            const text = String(item || '').trim().toLowerCase();
-            return text && 
-                   !text.includes('无') && 
-                   !text.includes('无变化') && 
-                   !text.includes('无新增');
+            const text = String(item || '').trim();
+            if (!text) return false;
+            
+            // 过滤掉包含以下关键词的条目：不变、不改变、沿用、保持、无
+            const patterns = [
+                /不变/,                          // 匹配"不变"
+                /不[^变]*改变/,                    // 匹配"不改变"、"不xx改变"等
+                /沿用/,                          // 匹配"沿用"
+                /保持/,                          // 匹配"保持"
+                /无/                             // 匹配所有包含"无"的条目
+            ];
+            
+            // 如果匹配到任何一个模式，则过滤掉
+            return !patterns.some(pattern => pattern.test(text));
         })
         : [];
     
+    // 如果changes为空，则不显示changes部分
     const changesHtml = filteredInsights.length > 0
         ? `<div class="list-section"><ul>${filteredInsights.map(item => `<li><div class="highlight-block playing-change"><span class="highlight-block-value">${escapeHtml(item)}</span></div></li>`).join('')}</ul></div>`
-        : '<div class="text-block muted"><div class="text-block-content"><p>No changes have been logged for this iteration yet.</p></div></div>';
+        : '';
     
-    // 合并plan和changes
+    // 合并plan和changes（如果changes为空，只显示plan）
     const planChangesHtml = `
         <div class="plan-changes-container">
             <div class="plan-section">
                 <h3 class="section-title">Plan</h3>
                 <div class="text-block">${planHtml}</div>
             </div>
+            ${changesHtml ? `
             <div class="changes-section">
                 <h3 class="section-title">Changes</h3>
                 ${changesHtml}
             </div>
+            ` : ''}
         </div>
     `;
 
@@ -1325,6 +1601,69 @@ function renderNodeDetailsForPlayback(node) {
     }, 300);
 }
 
+// 判断metric是high is better还是low is better
+function isHighIsBetter(demoId, metricName) {
+    // 根据demo_id或metric名称判断
+    // 常见的low is better指标
+    const lowIsBetterPatterns = [
+        /mae/i,      // Mean Absolute Error
+        /mse/i,      // Mean Squared Error
+        /rmse/i,     // Root Mean Squared Error
+        /loss/i,     // Loss
+        /error/i,    // Error
+        /cost/i      // Cost
+    ];
+    
+    // 如果metric名称匹配low is better模式，返回false
+    if (metricName) {
+        if (lowIsBetterPatterns.some(pattern => pattern.test(metricName))) {
+            return false;
+        }
+    }
+    
+    // 默认high is better（大多数Kaggle比赛都是这样）
+    return true;
+}
+
+// 检查节点的metric是否比所有祖先节点更好（根据better方向）
+function isMetricBetterThanAllAncestors(hierarchyNode) {
+    if (!hierarchyNode || !hierarchyNode.data) return false;
+    
+    const currentNodeMetric = hierarchyNode.data.metric;
+    // 如果当前节点没有metric，返回false
+    if (currentNodeMetric === null || currentNodeMetric === undefined || typeof currentNodeMetric !== 'number') {
+        return false;
+    }
+    
+    // 判断是high is better还是low is better
+    const demoId = hierarchyNode.data.demo_id || '';
+    const highIsBetter = isHighIsBetter(demoId, null);
+    
+    // 遍历所有祖先节点
+    let ancestor = hierarchyNode.parent;
+    while (ancestor) {
+        const ancestorMetric = ancestor.data.metric;
+        // 如果祖先节点有metric
+        if (ancestorMetric !== null && ancestorMetric !== undefined && typeof ancestorMetric === 'number') {
+            if (highIsBetter) {
+                // High is better: 如果祖先节点metric >= 当前节点，返回false
+                if (ancestorMetric >= currentNodeMetric) {
+                    return false;
+                }
+            } else {
+                // Low is better: 如果祖先节点metric <= 当前节点，返回false
+                if (ancestorMetric <= currentNodeMetric) {
+                    return false;
+                }
+            }
+        }
+        ancestor = ancestor.parent;
+    }
+    
+    // 所有祖先节点的metric都比当前节点差，返回true
+    return true;
+}
+
 // 渲染树
 function renderTree(root) {
     const svg = d3.select('#tree-svg');
@@ -1336,13 +1675,27 @@ function renderTree(root) {
     
     // 使用DFS递归遍历构建序列（确保是真正的深度优先搜索顺序）
     const dfsSequence = [];
+    const highlightedSequence = []; // 高亮节点序列
+    
     function dfsTraverse(node) {
         if (!node) return;
+        
+        // 检查是否是高亮节点（metric比所有祖先更好）
+        const isHighlighted = isMetricBetterThanAllAncestors(node);
+        
         // 将当前节点加入序列
-        dfsSequence.push({
+        const nodeInfo = {
             node_index: node.data.node_index,
-            data: node.data
-        });
+            data: node.data,
+            isHighlighted: isHighlighted
+        };
+        dfsSequence.push(nodeInfo);
+        
+        // 如果是高亮节点，加入高亮序列
+        if (isHighlighted) {
+            highlightedSequence.push(nodeInfo);
+        }
+        
         // 递归遍历子节点（深度优先）
         if (node.children && node.children.length > 0) {
             node.children.forEach(child => dfsTraverse(child));
@@ -1351,8 +1704,11 @@ function renderTree(root) {
     dfsTraverse(hierarchyRoot);
     
     state.staticDFSSequence = dfsSequence;
+    state.highlightedNodesSequence = highlightedSequence;
     state.tabNavigationIndex = -1; // 重置Tab导航索引
+    state.highlightedNavigationIndex = -1; // 重置高亮节点导航索引
     console.log(`📋 Static DFS sequence built: ${state.staticDFSSequence.length} nodes`, state.staticDFSSequence.map(n => n.node_index));
+    console.log(`✨ Highlighted nodes: ${state.highlightedNodesSequence.length} nodes`, state.highlightedNodesSequence.map(n => n.node_index));
 
     const rect = elements.treeSvg.getBoundingClientRect();
     const width = rect.width || elements.treeSvg.clientWidth || 960;
@@ -1369,6 +1725,17 @@ function renderTree(root) {
         .attr('y2', 0); // 改回水平渐变
     gradient.append('stop').attr('offset', '0%').attr('stop-color', 'rgba(96,165,250,0.75)');
     gradient.append('stop').attr('offset', '100%').attr('stop-color', 'rgba(129,140,248,0.65)');
+    
+    // 高亮路径的渐变（更亮的紫色）
+    const highlightGradient = defs.append('linearGradient')
+        .attr('id', 'tree-link-gradient-highlight')
+        .attr('gradientUnits', 'userSpaceOnUse')
+        .attr('x1', 0)
+        .attr('y1', 0)
+        .attr('x2', width)
+        .attr('y2', 0);
+    highlightGradient.append('stop').attr('offset', '0%').attr('stop-color', 'rgba(167,139,250,0.9)');
+    highlightGradient.append('stop').attr('offset', '100%').attr('stop-color', 'rgba(196,181,253,0.85)');
 
     const glow = defs.append('filter')
         .attr('id', 'node-glow')
@@ -1457,13 +1824,66 @@ function renderTree(root) {
         .x(d => d.y)  // 水平布局：x是y
         .y(d => d.x); // 水平布局：y是x
 
+    // 为每个hierarchy节点添加高亮标记
+    nodes.forEach(node => {
+        node.isHighlighted = isMetricBetterThanAllAncestors(node);
+    });
+    
+    // 找到所有高亮节点，并标记从根到这些节点的路径
+    const highlightedNodes = nodes.filter(node => node.isHighlighted);
+    const pathNodeIndices = new Set(); // 存储路径上所有节点的索引
+    const pathLinkPairs = new Set(); // 存储路径上的连线对 (sourceIndex-targetIndex)
+    
+    // 对于每个高亮节点，找到从根到它的路径
+    highlightedNodes.forEach(highlightedNode => {
+        let currentNode = highlightedNode;
+        // 从当前节点向上遍历到根节点
+        while (currentNode) {
+            pathNodeIndices.add(currentNode.data.node_index);
+            // 如果有父节点，记录父子连线
+            if (currentNode.parent) {
+                const parentIndex = currentNode.parent.data.node_index;
+                const childIndex = currentNode.data.node_index;
+                pathLinkPairs.add(`${parentIndex}-${childIndex}`);
+            }
+            currentNode = currentNode.parent;
+        }
+    });
+
     const linkSelection = g.selectAll('.link')
         .data(links)
         .enter()
         .append('path')
-        .attr('class', 'link')
-        .attr('stroke', 'url(#tree-link-gradient)')
-        .attr('stroke-width', '3px')
+        .attr('class', d => {
+            const sourceIndex = d.source.data.node_index;
+            const targetIndex = d.target.data.node_index;
+            const linkKey = `${sourceIndex}-${targetIndex}`;
+            // 如果连线在路径上，添加path-highlight类
+            if (pathLinkPairs.has(linkKey)) {
+                return 'link path-highlight';
+            }
+            return 'link';
+        })
+        .attr('stroke', d => {
+            const sourceIndex = d.source.data.node_index;
+            const targetIndex = d.target.data.node_index;
+            const linkKey = `${sourceIndex}-${targetIndex}`;
+            // 如果连线在路径上，使用高亮渐变色
+            if (pathLinkPairs.has(linkKey)) {
+                return 'url(#tree-link-gradient-highlight)';
+            }
+            return 'url(#tree-link-gradient)';
+        })
+        .attr('stroke-width', d => {
+            const sourceIndex = d.source.data.node_index;
+            const targetIndex = d.target.data.node_index;
+            const linkKey = `${sourceIndex}-${targetIndex}`;
+            // 如果连线在路径上，使用更粗的线条
+            if (pathLinkPairs.has(linkKey)) {
+                return '4px';
+            }
+            return '3px';
+        })
         .attr('stroke-linecap', 'round')
         .attr('d', d => {
             const origin = { x: d.source.y, y: d.source.x }; // 水平布局：交换x和y
@@ -1484,16 +1904,34 @@ function renderTree(root) {
                 .ease(d3.easeCubicOut)
                 .attr('stroke-dashoffset', 0);
         });
-
+    
     const nodeSelection = g.selectAll('.node')
         .data(nodes, d => `${d.data.node_index}-${d.depth}`)
         .enter()
         .append('g')
         .attr('class', d => {
-            if (d.data.is_virtual) return 'node virtual root-node';
-            if (d.data.is_bug === 'True' || d.data.is_bug === true) return 'node bug';
-            if (d.data.metric !== null && d.data.metric !== undefined) return 'node success';
-            return 'node normal';
+            let classes = [];
+            if (d.data.is_virtual) {
+                classes.push('node', 'virtual', 'root-node');
+            } else {
+                classes.push('node');
+                if (d.data.is_bug === 'True' || d.data.is_bug === true) {
+                    classes.push('bug');
+                } else if (d.data.metric !== null && d.data.metric !== undefined) {
+                    classes.push('success');
+                } else {
+                    classes.push('normal');
+                }
+                // 如果是高亮节点（metric大于所有祖先），添加metric-highlight类
+                if (d.isHighlighted) {
+                    classes.push('metric-highlight');
+                }
+                // 如果节点在路径上，添加path-highlight类
+                if (pathNodeIndices.has(d.data.node_index)) {
+                    classes.push('path-highlight');
+                }
+            }
+            return classes.join(' ');
         })
         .attr('transform', d => `translate(${d.y},${d.x})`) // 水平布局：y是x，x是y
         .attr('data-node-index', d => d.data.node_index) // 添加data-node-index属性，用于Tab导航查找节点
@@ -1958,12 +2396,157 @@ function navigateToNextNode() {
     }
 }
 
+// J键导航到下一个高亮节点（DFS序）
+function navigateToNextHighlightedNode() {
+    // 只在静态模式下工作（不在播放模式）
+    if (state.isPlaying) {
+        console.log('⚠️ Highlighted node navigation disabled during playback');
+        return;
+    }
+    
+    // 检查是否有高亮节点序列
+    if (!state.highlightedNodesSequence || state.highlightedNodesSequence.length === 0) {
+        console.warn('⚠️ No highlighted nodes available for navigation');
+        return;
+    }
+    
+    // 如果还没有开始导航，从第一个高亮节点开始；否则移动到下一个节点
+    if (state.highlightedNavigationIndex < 0) {
+        state.highlightedNavigationIndex = 0;
+    } else {
+        state.highlightedNavigationIndex = (state.highlightedNavigationIndex + 1) % state.highlightedNodesSequence.length;
+    }
+    
+    const currentNode = state.highlightedNodesSequence[state.highlightedNavigationIndex];
+    const nodeIndex = currentNode.node_index;
+    
+    console.log(`✨ J navigation: index=${state.highlightedNavigationIndex}, node=${nodeIndex}`);
+    
+    // 在SVG中找到对应的节点
+    const nodeGroup = d3.select(`#tree-svg [data-node-index="${nodeIndex}"]`);
+    
+    if (nodeGroup.empty()) {
+        console.warn(`⚠️ Node ${nodeIndex} not found in SVG, skipping...`);
+        // 如果找不到节点，尝试下一个
+        if (state.highlightedNavigationIndex < state.highlightedNodesSequence.length - 1) {
+            state.highlightedNavigationIndex++;
+            navigateToNextHighlightedNode();
+        }
+        return;
+    }
+    
+    // 获取节点数据
+    const nodeData = nodeGroup.datum();
+    
+    // 清除之前节点的选中状态
+    d3.select('#tree-svg').selectAll('.node').classed('selected', false);
+    
+    // 居中显示节点
+    centerNodeInView(nodeData, 1.8);
+    
+    // 节点出现动画
+    nodeGroup.transition()
+        .duration(400)
+        .ease(d3.easeCubicOut)
+        .style('opacity', 1);
+    
+    nodeGroup.select('text')
+        .transition()
+        .delay(200)
+        .duration(300)
+        .ease(d3.easeCubicOut)
+        .style('opacity', 0.95);
+    
+    // 高亮当前节点
+    nodeGroup.classed('selected', true);
+    
+    // 显示节点详情
+    state.selectedNode = nodeData;
+    if (!nodeData.data.is_virtual) {
+        renderNodeDetails(nodeData.data);
+    } else {
+        resetNodeDetails();
+    }
+}
+
+// B键导航到上一个高亮节点（DFS序）
+function navigateToPreviousHighlightedNode() {
+    // 只在静态模式下工作（不在播放模式）
+    if (state.isPlaying) {
+        console.log('⚠️ Highlighted node navigation disabled during playback');
+        return;
+    }
+    
+    // 检查是否有高亮节点序列
+    if (!state.highlightedNodesSequence || state.highlightedNodesSequence.length === 0) {
+        console.warn('⚠️ No highlighted nodes available for navigation');
+        return;
+    }
+    
+    // 如果还没有开始导航，从最后一个高亮节点开始；否则移动到上一个节点
+    if (state.highlightedNavigationIndex < 0) {
+        state.highlightedNavigationIndex = state.highlightedNodesSequence.length - 1;
+    } else {
+        state.highlightedNavigationIndex = (state.highlightedNavigationIndex - 1 + state.highlightedNodesSequence.length) % state.highlightedNodesSequence.length;
+    }
+    
+    const currentNode = state.highlightedNodesSequence[state.highlightedNavigationIndex];
+    const nodeIndex = currentNode.node_index;
+    
+    console.log(`✨ B navigation: index=${state.highlightedNavigationIndex}, node=${nodeIndex}`);
+    
+    // 在SVG中找到对应的节点
+    const nodeGroup = d3.select(`#tree-svg [data-node-index="${nodeIndex}"]`);
+    
+    if (nodeGroup.empty()) {
+        console.warn(`⚠️ Node ${nodeIndex} not found in SVG, skipping...`);
+        // 如果找不到节点，尝试上一个
+        if (state.highlightedNavigationIndex > 0) {
+            state.highlightedNavigationIndex--;
+            navigateToPreviousHighlightedNode();
+        }
+        return;
+    }
+    
+    // 获取节点数据
+    const nodeData = nodeGroup.datum();
+    
+    // 清除之前节点的选中状态
+    d3.select('#tree-svg').selectAll('.node').classed('selected', false);
+    
+    // 居中显示节点
+    centerNodeInView(nodeData, 1.8);
+    
+    // 节点出现动画
+    nodeGroup.transition()
+        .duration(400)
+        .ease(d3.easeCubicOut)
+        .style('opacity', 1);
+    
+    nodeGroup.select('text')
+        .transition()
+        .delay(200)
+        .duration(300)
+        .ease(d3.easeCubicOut)
+        .style('opacity', 0.95);
+    
+    // 高亮当前节点
+    nodeGroup.classed('selected', true);
+    
+    // 显示节点详情
+    state.selectedNode = nodeData;
+    if (!nodeData.data.is_virtual) {
+        renderNodeDetails(nodeData.data);
+    } else {
+        resetNodeDetails();
+    }
+}
+
 // 渲染节点详情
 function renderNodeDetails(node) {
     if (node.is_virtual) return;
 
     const sections = [
-        { id: 'overview', label: 'Overview', icon: '📊' },
         { id: 'plan_changes', label: 'Plan & Changes', icon: '📋' },
         { id: 'code', label: 'Code', icon: '💻' },
         { id: 'analysis', label: 'Analysis', icon: '🔍' },
@@ -1981,32 +2564,44 @@ function renderNodeDetails(node) {
     const nodeAnalysisHtml = formatNodeAnalysis(node.node_level_analysis);
     const codeHtml = escapeHtml(node.code || '// No code available');
     
-    // 过滤changes中包含"无"、"无变化"、"无新增"的条目
+    // 使用正则表达式过滤changes中包含"不变"、"不xx改变"、"沿用"、"保持"的条目
     const filteredInsights = node.insights_from_parent && Array.isArray(node.insights_from_parent)
         ? node.insights_from_parent.filter(item => {
-            const text = String(item || '').trim().toLowerCase();
-            return text && 
-                   !text.includes('无') && 
-                   !text.includes('无变化') && 
-                   !text.includes('无新增');
+            const text = String(item || '').trim();
+            if (!text) return false;
+            
+            // 过滤掉包含以下关键词的条目：不变、不改变、沿用、保持、无
+            const patterns = [
+                /不变/,                          // 匹配"不变"
+                /不[^变]*改变/,                    // 匹配"不改变"、"不xx改变"等
+                /沿用/,                          // 匹配"沿用"
+                /保持/,                          // 匹配"保持"
+                /无/                             // 匹配所有包含"无"的条目
+            ];
+            
+            // 如果匹配到任何一个模式，则过滤掉
+            return !patterns.some(pattern => pattern.test(text));
         })
         : [];
     
+    // 如果changes为空，则不显示changes部分
     const changesHtml = filteredInsights.length > 0
         ? `<div class="list-section"><ul>${filteredInsights.map(item => `<li><div class="highlight-block"><span class="highlight-block-value">${escapeHtml(item)}</span></div></li>`).join('')}</ul></div>`
-        : '<div class="text-block muted"><div class="text-block-content"><p>No changes have been logged for this iteration yet.</p></div></div>';
+        : '';
     
-    // 合并plan和changes
+    // 合并plan和changes（如果changes为空，只显示plan）
     const planChangesHtml = `
         <div class="plan-changes-container">
             <div class="plan-section">
                 <h3 class="section-title">Plan</h3>
                 <div class="text-block">${planHtml}</div>
             </div>
+            ${changesHtml ? `
             <div class="changes-section">
                 <h3 class="section-title">Changes</h3>
                 ${changesHtml}
             </div>
+            ` : ''}
         </div>
     `;
 
@@ -2036,48 +2631,7 @@ function renderNodeDetails(node) {
             </div>
 
             <div class="page-content">
-                <div id="section-overview" class="page-section active">
-                    <div class="info-grid">
-                        <div class="info-item">
-                            <div class="highlight-block">
-                                <span class="highlight-block-label">Competition</span>
-                                <span class="highlight-block-value">${competitionLabel}</span>
-                            </div>
-                        </div>
-                        <div class="info-item">
-                            <div class="highlight-block">
-                                <span class="highlight-block-label">Parent</span>
-                                <span class="highlight-block-value">${escapeHtml(String(parentLabel))}</span>
-                            </div>
-                        </div>
-                        <div class="info-item">
-                            <div class="highlight-block">
-                                <span class="highlight-block-label">Children</span>
-                                <span class="highlight-block-value">${childCount}</span>
-                            </div>
-                        </div>
-                        <div class="info-item">
-                            <div class="highlight-block">
-                                <span class="highlight-block-label">Metric</span>
-                                <span class="highlight-block-value">${metricText}</span>
-                            </div>
-                        </div>
-                        <div class="info-item">
-                            <div class="highlight-block">
-                                <span class="highlight-block-label">Status</span>
-                                <span class="highlight-block-value">${node.is_bug === 'True' || node.is_bug === true ? 'Bug flagged' : 'Healthy'}</span>
-                            </div>
-                        </div>
-                        <div class="info-item">
-                            <div class="highlight-block">
-                                <span class="highlight-block-label">Node Index</span>
-                                <span class="highlight-block-value">${node.node_index}</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <div id="section-plan_changes" class="page-section">${planChangesHtml}</div>
+                <div id="section-plan_changes" class="page-section active">${planChangesHtml}</div>
                 <div id="section-code" class="page-section"><pre class="code-block"><code class="language-python">${codeHtml}</code></pre></div>
                 <div id="section-analysis" class="page-section"><div class="text-block">${analysisHtml}</div></div>
                 <div id="section-node_level_analysis" class="page-section"><div class="text-block">${nodeAnalysisHtml}</div></div>
@@ -2097,7 +2651,7 @@ function renderNodeDetails(node) {
     const tabs = elements.nodeDetails.querySelectorAll('.page-tab');
     const sectionsDom = elements.nodeDetails.querySelectorAll('.page-section');
     
-    // 存储当前选中的section索引，用于键盘导航
+    // 存储当前选中的section索引，用于键盘导航（默认显示Plan & Changes）
     state.currentSectionIndex = 0;
     
     function switchSection(index) {
@@ -2351,6 +2905,13 @@ function setupEventListeners() {
     // Play按钮事件监听（在页面显示时绑定）
     setupPlayButton();
     
+    // 高亮视图切换按钮
+    if (elements.highlightViewBtn) {
+        elements.highlightViewBtn.addEventListener('click', () => {
+            toggleHighlightView();
+        });
+    }
+    
     // 键盘导航支持
     document.addEventListener('keydown', (e) => {
         // 只在tree-viewer页面时响应
@@ -2367,6 +2928,20 @@ function setupEventListeners() {
         if (e.key === 'Tab') {
             e.preventDefault(); // 阻止默认的Tab行为（切换焦点）
             navigateToNextNode();
+            return;
+        }
+        
+        // J键导航到下一个高亮节点（DFS序）
+        if (e.key === 'j' || e.key === 'J') {
+            e.preventDefault();
+            navigateToNextHighlightedNode();
+            return;
+        }
+        
+        // B键导航到上一个高亮节点（DFS序）
+        if (e.key === 'b' || e.key === 'B') {
+            e.preventDefault();
+            navigateToPreviousHighlightedNode();
             return;
         }
         
